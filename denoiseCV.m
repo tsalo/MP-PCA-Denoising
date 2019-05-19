@@ -1,7 +1,7 @@
 function [denoised,S2,P] = denoiseCV(image,window,mask)
 % function [denoised,S2,P] = denoiseCV(image,window,mask)
 %
-% Denoising implementation by Jonas Olesen, Mark Does and Sune Jespersen for diffusion 
+% Denoising implementation by Jonas Olesen, Mark Does and Sune Jespersen for diffusion
 % MRI data based on the algorithm presented by Veraart et al. (2016) 142, p
 % 394-406 https://doi.org/10.1016/j.neuroimage.2016.08.016.
 %
@@ -32,7 +32,7 @@ function [denoised,S2,P] = denoiseCV(image,window,mask)
 % 394-406 https://doi.org/10.1016/j.neuroimage.2016.08.016 and Does et al.,
 % MRM (2018) (Evaluation of Principal Component Analysis Image Denoising on
 % Multi-Exponential MRI Relaxometry), reference will be finalized when
-% available. 
+% available.
 %
 
 %% adjust image dimensions and assert
@@ -54,8 +54,8 @@ end
 
 
 %% denoise image
-M = dims(4);
-N = prod(window);
+n_vols = dims(4);  % was M
+window_size = prod(window);  % was N
 denoised = zeros(dims);
 P = zeros(dims(1:3));
 S2 = zeros(dims(1:3));
@@ -72,22 +72,22 @@ for index = 1:m*n*o
     cols = j:j-1+window(2);
     slis = k:k-1+window(3);
     % Check mask
-    maskCheck = reshape(mask(rows,cols,slis),[N 1])';
+    maskCheck = reshape(mask(rows,cols,slis),[window_size 1])';
     if all(~maskCheck), continue, end
-    
+
     % Create X data matrix
-    X = reshape(image(rows,cols,slis,:),[N M])';
-    
+    X = reshape(image(rows,cols,slis,:),[window_size n_vols])';
+
     % Remove voxels not contained in mask
     X(:,~maskCheck) = [];
     if size(X,2)==1, continue, end % skip if only one voxel of window in mask
        % Perform denoising
-    newX=zeros(M,N); sigma2=zeros(1,N); p=zeros(1,N);
+    newX=zeros(n_vols,window_size); sigma2=zeros(1,window_size); p=zeros(1,window_size);
     [newX(:,maskCheck),sigma2(maskCheck),p(maskCheck)] = denoiseMatrix(X);
-    
+
     % Assign newX to correct indices in denoisedImage
     denoised(rows,cols,slis,:) = denoised(rows,cols,slis,:) ...
-      + reshape(newX',[window M]);
+      + reshape(newX',[window n_vols]);
     P(rows,cols,slis) = P(rows,cols,slis) + reshape(p,window);
     S2(rows,cols,slis) = S2(rows,cols,slis) + reshape(sigma2,window);
     counter(rows,cols,slis) = counter(rows,cols,slis)+1;
@@ -119,26 +119,26 @@ end
 
 function [newX,sigma2,p] = denoiseMatrix(X)
 % helper function to denoise.m
-% Takes as input matrix X with dimension MxN with N corresponding to the
-% number of pixels and M to the number of data points. The output consists
+% Takes as input matrix X with dimension MxN with window_size corresponding to the
+% number of pixels and n_vols to the number of data points. The output consists
 % of "newX" containing a denoised version of X, "sigma2" an approximation
 % to the data variation, "p" the number of signal carrying components.
 
-[M,N] = size(X);
-minMN = min([M N]);
+[n_vols,window_size] = size(X);
+minMN = min([n_vols window_size]);
 Xm = mean(X,2); % MDD added Jan 2018; mean added back to signal below;
 X = X-Xm;
 % [U,S,V] = svdecon(X); MDD replaced with MATLAB svd vvv 3Nov2017
 [U,S,V] = svd(X,'econ');
 
-lambda = diag(S).^2/N;
+lambda = diag(S).^2/window_size;
 
 p = 0;
 pTest = false;
-scaling = (M-(0:minMN))/N;
+scaling = (n_vols-(0:minMN))/window_size;
 scaling(scaling<1) = 1;
 while ~pTest
-    sigma2 = (lambda(p+1)-lambda(minMN))/(4*sqrt((M-p)/N));
+    sigma2 = (lambda(p+1)-lambda(minMN))/(4*sqrt((n_vols-p)/window_size));
     pTest = sum(lambda(p+1:minMN))/scaling(p+1) >= (minMN-p)*sigma2;
     if ~pTest, p = p+1; end
 end
