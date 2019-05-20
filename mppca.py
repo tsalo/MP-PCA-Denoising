@@ -155,13 +155,11 @@ def denoise_matrix(X):
     # [U,S,V] = svdecon(X); MDD replaced with MATLAB svd vvv 3Nov2017
     # U, S, V = svd(X, 'econ')
     # NOTE: full matrices=False should be same as economy-size SVD
-    U, S, V = np.linalg.svd(X, full_matrices=False)
+    U, S, V = np.linalg.svd(X, full_matrices=True)
     S = np.diag(S)  # make S array into diagonal matrix
 
     lambda_ = (np.diag(S) ** 2) / n_voxels
 
-    n_comps = 0
-    p_test = False
     scaling = (n_vols - np.arange(min_mn)) / n_voxels
     scaling[scaling < 1] = 1
     for n_comps in range(min_mn):
