@@ -169,8 +169,6 @@ def denoise_matrix(X):
         p_test = np.sum(lambda_[n_comps:min_mn]) / scaling[n_comps] >= (min_mn - n_comps) * sigma2
         if p_test:
             continue
-        else:
-            n_comps += 1
 
     sigma2 = np.sum(lambda_[n_comps:min_mn]) / (min_mn - n_comps) / scaling[n_comps]
     new_X = np.dot(np.dot(U[:, :n_comps], S[:n_comps, :n_comps]), V[:, :n_comps].T) + X_m
