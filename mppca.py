@@ -64,10 +64,9 @@ def denoise_cv(img, window=(5, 5, 5), mask=None):
     o = dims[2] - window[2] + 1
 
     for index in range(np.prod([m, n, o])):
-        # TODO: Clarify order of operations with parens
-        i = index - (k - 1) * m * n - (j - 1) * m  # not set for zero-indexing
-        j = np.floor((index - (k - 1) * m * n) / m) + 1  # should be fine for zero-indexing
-        k = np.floor(index / m / n) + 1  # should be fine for zero-indexing
+        i = (index - ((k - 1) * m * n) - ((j - 1) * m)) - 1  # should be fine for zero-indexing
+        j = np.floor(((index - 1) - ((k - 1) * m * n)) / m)  # should be fine for zero-indexing
+        k = np.floor(((index - 1) / m) / n)  # should be fine for zero-indexing
 
         rows = np.arange(i, i + window[0])
         cols = np.arange(j, j + window[1])
@@ -84,7 +83,7 @@ def denoise_cv(img, window=(5, 5, 5), mask=None):
         X = np.reshape(img.get_data()[rows, cols, slis, :], [window_size, n_vols]).T
 
         # Remove voxels not contained in mask
-        X[:, ~mask_check] = []  # ??
+        X[:, ~mask_check] = []  # TODO: Translate to Python
         if X.shape[1] == 1:
             continue
 
