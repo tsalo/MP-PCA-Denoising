@@ -53,7 +53,9 @@ def mppca_denoise(img, window=(5, 5, 5), mask=None):
     dims = img.shape
     assert len(window) > 1 and len(window) < 4
     assert all(np.array(window) > 0)
+    assert all([(w % 2) == 1 for w in window]), 'window must be all odd numbers'
     assert all([window[i] < dims[i] for i in range(len(window))])
+    window = [int((w - 1) / 2) for w in window]  # convert to radii
 
     # Preallocate arrays
     denoised = img.get_data()
@@ -76,12 +78,13 @@ def mppca_denoise(img, window=(5, 5, 5), mask=None):
 
         # Define 3D window
         i_min = np.max((i - window[0], 0))
-        i_max = np.min((i + window[0], mask_data.shape[0]))
+        i_max = np.min((i + window[0] + 1, mask_data.shape[0]))
         j_min = np.max((j - window[1], 0))
-        j_max = np.min((j + window[1], mask_data.shape[1]))
+        j_max = np.min((j + window[1] + 1, mask_data.shape[1]))
         k_min = np.max((k - window[2], 0))
-        k_max = np.min((k + window[2], mask_data.shape[2]))
+        k_max = np.min((k + window[2] + 1, mask_data.shape[2]))
         window_mask = mask_data[i_min:i_max, j_min:j_max, k_min:k_max]
+
         # skip if only one voxel of window in mask
         if window_mask.sum() < 2:
             continue
@@ -118,6 +121,7 @@ def mppca_denoise(img, window=(5, 5, 5), mask=None):
 
     # Fill denoised data not in mask or skipped by loop
     # with original data
+    original = img.get_data()
     inv_mask = (1 - mask_data).astype(bool)
     skipped_voxels = (mask_data & ~counter).astype(bool)
     denoised[inv_mask, :] = original[inv_mask, :]
@@ -144,7 +148,6 @@ def denoise_matrix(X):
     X : (n_voxels, n_vols) array_like
         Array of data to denoise
     """
-    X = X.T
     n_vols, n_voxels = X.shape
     min_mn = np.min(X.shape)
     X_m = np.mean(X, axis=1, keepdims=True)  # MDD added Jan 2018; mean added back to signal below
@@ -159,15 +162,16 @@ def denoise_matrix(X):
 
     n_comps = 0
     p_test = False
-    scaling = (n_vols - np.arange(0, min_mn)) / n_voxels
+    scaling = (n_vols - np.arange(min_mn)) / n_voxels
     scaling[scaling < 1] = 1
-    while not p_test:
+    for n_comps in range(min_mn):
         sigma2 = (lambda_[n_comps] - lambda_[min_mn - 1]) / (4 * np.sqrt((n_vols - n_comps) / n_voxels))
         p_test = np.sum(lambda_[n_comps:min_mn]) / scaling[n_comps] >= (min_mn - n_comps) * sigma2
-        if not p_test:
+        if p_test:
+            continue
+        else:
             n_comps += 1
 
     sigma2 = np.sum(lambda_[n_comps:min_mn]) / (min_mn - n_comps) / scaling[n_comps]
     new_X = np.dot(np.dot(U[:, :n_comps], S[:n_comps, :n_comps]), V[:, :n_comps].T) + X_m
-    new_X = new_X.T
     return new_X, sigma2, n_comps
