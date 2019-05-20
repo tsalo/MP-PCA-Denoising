@@ -90,15 +90,15 @@ def mppca_denoise(img, window=(5, 5, 5), mask=None):
         temp_mask[i_min:i_max, j_min:j_max, k_min:k_max] = window_mask
         temp_mask_img = nib.Nifti1Image(temp_mask, img.affine)
 
-        masked_data = apply_mask(img, temp_mask_img).T  # (n_voxels, n_vols)
+        masked_data = apply_mask(img, temp_mask_img)  # (n_vols, n_voxels)
         denoised_data, sigma2, p = denoise_matrix(masked_data)
 
         # Convert scalars to window-sized arrays
-        sigma2 = sigma2 * np.ones(denoised_data.shape[0])
-        p = p * np.ones(denoised_data.shape[0])
+        sigma2 = sigma2 * np.ones(denoised_data.shape[1])
+        p = p * np.ones(denoised_data.shape[1])
 
         # create full-sized zero arrays with only window filled with real values
-        unmasked_data = unmask(denoised_data.T, temp_mask_img).get_data()
+        unmasked_data = unmask(denoised_data, temp_mask_img).get_data()
         unmasked_sigma2 = unmask(sigma2, temp_mask_img).get_data()
         unmasked_p = unmask(p, temp_mask_img).get_data()
 
@@ -134,12 +134,18 @@ def mppca_denoise(img, window=(5, 5, 5), mask=None):
 def denoise_matrix(X):
     """
     helper function to denoise.m
-    Takes as input matrix X with dimension MxN with window_size corresponding to the
+    Takes as input matrix X with dimension MxN with n_voxels corresponding to the
     number of pixels and n_vols to the number of data points. The output consists
     of "newX" containing a denoised version of X, "sigma2" an approximation
     to the data variation, "p" the number of signal carrying components.
+
+    Parameters
+    ----------
+    X : (n_voxels, n_vols) array_like
+        Array of data to denoise
     """
-    n_vols, window_size = X.shape
+    X = X.T
+    n_vols, n_voxels = X.shape
     min_mn = np.min(X.shape)
     X_m = np.mean(X, axis=1, keepdims=True)  # MDD added Jan 2018; mean added back to signal below
     X = X - X_m
@@ -149,18 +155,19 @@ def denoise_matrix(X):
     U, S, V = np.linalg.svd(X, full_matrices=False)
     S = np.diag(S)  # make S array into diagonal matrix
 
-    lambda_ = (np.diag(S) ** 2) / window_size
+    lambda_ = (np.diag(S) ** 2) / n_voxels
 
     p = 0
     p_test = False
-    scaling = (n_vols - np.arange(0, min_mn)) / window_size
+    scaling = (n_vols - np.arange(0, min_mn)) / n_voxels
     scaling[scaling < 1] = 1
     while not p_test:
-        sigma2 = (lambda_[p] - lambda_[min_mn - 1]) / (4 * np.sqrt((n_vols - p) / window_size))
-        p_test = np.sum(lambda_[p:min_mn-1]) / scaling[p] >= (min_mn - p - 1) * sigma2
+        sigma2 = (lambda_[p] - lambda_[min_mn - 1]) / (4 * np.sqrt((n_vols - p) / n_voxels))
+        p_test = np.sum(lambda_[p:min_mn-1]) / scaling[p] >= (min_mn - p) * sigma2
         if not p_test:
             p += 1
 
-    sigma2 = np.sum(lambda_[p:min_mn-1]) / (min_mn - p - 1) / scaling[p]
+    sigma2 = np.sum(lambda_[p:min_mn-1]) / (min_mn - p) / scaling[p]
     new_X = np.dot(np.dot(U[:, :p], S[:p, :p]), V[:, :p].T) + X_m
+    new_X = new_X.T
     return new_X, sigma2, p
