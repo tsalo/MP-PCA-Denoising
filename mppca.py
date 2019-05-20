@@ -6,7 +6,7 @@ import nibabel as nib
 from nilearn.masking import apply_mask, unmask
 
 
-def denoise_cv(img, window=(5, 5, 5), mask=None):
+def mppca_denoise(img, window=(5, 5, 5), mask=None):
     """
     Denoising implementation by Jonas Olesen, Mark Does and Sune Jespersen for diffusion
     MRI data based on the algorithm presented by Veraart et al. (2016) 142, p
@@ -47,6 +47,9 @@ def denoise_cv(img, window=(5, 5, 5), mask=None):
     Multi-Exponential MRI Relaxometry), reference will be finalized when
     available.
     """
+    if isinstance(img, str):
+        img = nib.load(img)
+
     dims = img.shape
     assert len(window) > 1 and len(window) < 4
     assert all(np.array(window) > 0)
@@ -59,6 +62,9 @@ def denoise_cv(img, window=(5, 5, 5), mask=None):
     counter = np.zeros(img.shape[:3], int)
 
     # Load mask
+    if isinstance(mask, str):
+        mask = nib.load(mask)
+
     if mask:
         mask_data = mask.get_data()
     else:
