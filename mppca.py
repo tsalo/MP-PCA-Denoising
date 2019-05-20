@@ -157,17 +157,17 @@ def denoise_matrix(X):
 
     lambda_ = (np.diag(S) ** 2) / n_voxels
 
-    p = 0
+    n_comps = 0
     p_test = False
     scaling = (n_vols - np.arange(0, min_mn)) / n_voxels
     scaling[scaling < 1] = 1
     while not p_test:
-        sigma2 = (lambda_[p] - lambda_[min_mn - 1]) / (4 * np.sqrt((n_vols - p) / n_voxels))
-        p_test = np.sum(lambda_[p:min_mn-1]) / scaling[p] >= (min_mn - p) * sigma2
+        sigma2 = (lambda_[n_comps] - lambda_[min_mn - 1]) / (4 * np.sqrt((n_vols - n_comps) / n_voxels))
+        p_test = np.sum(lambda_[n_comps:min_mn]) / scaling[n_comps] >= (min_mn - n_comps) * sigma2
         if not p_test:
-            p += 1
+            n_comps += 1
 
-    sigma2 = np.sum(lambda_[p:min_mn-1]) / (min_mn - p) / scaling[p]
-    new_X = np.dot(np.dot(U[:, :p], S[:p, :p]), V[:, :p].T) + X_m
+    sigma2 = np.sum(lambda_[n_comps:min_mn]) / (min_mn - n_comps) / scaling[n_comps]
+    new_X = np.dot(np.dot(U[:, :n_comps], S[:n_comps, :n_comps]), V[:, :n_comps].T) + X_m
     new_X = new_X.T
-    return new_X, sigma2, p
+    return new_X, sigma2, n_comps
