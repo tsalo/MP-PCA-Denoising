@@ -2,6 +2,8 @@
 Run MP-PCA.
 """
 import numpy as np
+import nibabel as nib
+from nilearn.masking import apply_mask, unmask
 
 
 def denoise_cv(img, window=(5, 5, 5), mask=None):
@@ -47,80 +49,78 @@ def denoise_cv(img, window=(5, 5, 5), mask=None):
     """
     dims = img.shape
     assert len(window) > 1 and len(window) < 4
-    assert all(window > 0)
+    assert all(np.array(window) > 0)
     assert all([window[i] < dims[i] for i in range(len(window))])
-    if len(window) == 2:
-        window = window + (1,)
 
-    # denoise image
-    n_vols = dims[3]
-    window_size = np.prod(window)
-    denoised = np.zeros(dims)
-    P = np.zeros(dims[:3])
-    S2 = np.zeros(P.shape)
-    counter = np.zeros(P.shape)
-    m = dims[0] - window[0] + 1
-    n = dims[1] - window[1] + 1
-    o = dims[2] - window[2] + 1
+    # Preallocate arrays
+    denoised = img.get_data()
+    S2 = np.zeros(img.shape[:3])
+    P = np.zeros(img.shape[:3])
+    counter = np.zeros(img.shape[:3], int)
 
-    for index in range(np.prod([m, n, o])):
-        i = (index - ((k - 1) * m * n) - ((j - 1) * m)) - 1  # should be fine for zero-indexing
-        j = np.floor(((index - 1) - ((k - 1) * m * n)) / m)  # should be fine for zero-indexing
-        k = np.floor(((index - 1) / m) / n)  # should be fine for zero-indexing
+    # Load mask
+    if mask:
+        mask_data = mask.get_data()
+    else:
+        mask_data = np.ones(img.shape)
 
-        rows = np.arange(i, i + window[0])
-        cols = np.arange(j, j + window[1])
-        slis = np.arange(k, k + window[2])
+    mask_idx = np.vstack(np.where(mask_data))
+    for i in range(mask_idx.shape[1]):
+        i, j, k = mask_idx[:, i]
 
-        # Check mask
-        # NOTE: I think this is the searchlight mask
-        mask_check = np.reshape(mask[rows, cols, slis], [window_size, 1]).T
-        if np.all(~mask_check):
+        # Define 3D window
+        i_min = np.max((i - window[0], 0))
+        i_max = np.min((i + window[0], mask_data.shape[0]))
+        j_min = np.max((j - window[1], 0))
+        j_max = np.min((j + window[1], mask_data.shape[1]))
+        k_min = np.max((k - window[2], 0))
+        k_max = np.min((k + window[2], mask_data.shape[2]))
+        window_mask = mask_data[i_min:i_max, j_min:j_max, k_min:k_max]
+        # skip if only one voxel of window in mask
+        if window_mask.sum() < 2:
             continue
 
-        # Create X data matrix
-        # NOTE: This is the searchlight data
-        X = np.reshape(img.get_data()[rows, cols, slis, :], [window_size, n_vols]).T
+        temp_mask = np.zeros(mask_data.shape, int)
+        temp_mask[i_min:i_max, j_min:j_max, k_min:k_max] = window_mask
+        temp_mask_img = nib.Nifti1Image(temp_mask, img.affine)
 
-        # Remove voxels not contained in mask
-        X[:, ~mask_check] = []  # TODO: Translate to Python
-        if X.shape[1] == 1:
-            continue
+        masked_data = apply_mask(img, temp_mask_img).T  # (n_voxels, n_vols)
+        denoised_data, sigma2, p = denoise_matrix(masked_data)
 
-        new_X = np.zeros((n_vols, window_size))
-        sigma2 = np.zeros((1, window_size))
-        p = np.zeros((1, window_size))
-        temp_new_X, temp_sigma2, temp_p = denoise_matrix(X)
-        new_X[:, mask_check] = temp_new_X
-        sigma2[mask_check] = temp_sigma2
-        p[mask_check] = temp_p
+        # Convert scalars to window-sized arrays
+        sigma2 = sigma2 * np.ones(denoised_data.shape[0])
+        p = p * np.ones(denoised_data.shape[0])
 
-        # Assign new_X to correct indices in denoised_img
-        denoised[rows, cols, slis, :] = denoised[rows, cols, slis, :] + np.reshape(new_X.T, (window, n_vols))
-        P[rows, cols, slis] = P[rows, cols, slis] + np.reshape(p, window)
-        S2[rows, cols, slis] = S2[rows, cols, slis] + np.reshape(sigma2, window)
-        counter[rows, cols, slis] += 1
+        # create full-sized zero arrays with only window filled with real values
+        unmasked_data = unmask(denoised_data.T, temp_mask_img).get_data()
+        unmasked_sigma2 = unmask(sigma2, temp_mask_img).get_data()
+        unmasked_p = unmask(p, temp_mask_img).get_data()
 
-    skip_check = mask and counter == 0
-    counter[counter == 0] = 1
-    # TODO: Translate to Python
-    denoised = bsxfun(@rdivide, denoised, counter)
-    P = bsxfun(@rdivide, P, counter)
-    S2 = bsxfun(@rdivide, S2, counter)
+        # add denoised values to arrays
+        denoised += unmasked_data
+        S2 += unmasked_sigma2
+        P += unmasked_p
+        counter += temp_mask_img.get_data()
 
-    # adjust output to match input dimensions
-    # assign original data to denoised_img outside of mask and at skipped voxels
-    # TODO: Translate to Python
-    original = bsxfun(@times, image, ~mask)
-    denoised = denoised + original
-    original = bsxfun(@times, image, skipCheck)
-    denoised = denoised + original
+    # Divide the summed arrays by the number of times each voxel
+    # is used across windows to get an average
+    temp_counter = counter.copy()
+    temp_counter[temp_counter == 0] = 1  # workaround for divide-by-zero errors
+    denoised = denoised / temp_counter[..., None]
+    S2 = S2 / temp_counter
+    P = P / temp_counter
 
-    # Shape denoisedImage as original image
-    if len(dimsOld) == 3:
-        denoised = np.reshape(denoised, dimsOld)
-        S2 = np.reshape(S2, dimsOld[:-1])
-        P = np.reshape(P, dimsOld[:-1])
+    # Fill denoised data not in mask or skipped by loop
+    # with original data
+    inv_mask = (1 - mask_data).astype(bool)
+    skipped_voxels = (mask_data & ~counter).astype(bool)
+    denoised[inv_mask, :] = original[inv_mask, :]
+    denoised[skipped_voxels, :] = original[skipped_voxels, :]
+
+    # Make imgs
+    denoised = nib.Nifti1Image(denoised, img.affine)
+    S2 = nib.Nifti1Image(S2, img.affine)
+    P = nib.Nifti1Image(P, img.affine)
 
     return denoised, S2, P
 
@@ -135,12 +135,13 @@ def denoise_matrix(X):
     """
     n_vols, window_size = X.shape
     min_mn = np.min(X.shape)
-    X_m = np.mean(X, axis=1)  # MDD added Jan 2018; mean added back to signal below
+    X_m = np.mean(X, axis=1, keepdims=True)  # MDD added Jan 2018; mean added back to signal below
     X = X - X_m
     # [U,S,V] = svdecon(X); MDD replaced with MATLAB svd vvv 3Nov2017
     # U, S, V = svd(X, 'econ')
     # NOTE: full matrices=False should be same as economy-size SVD
     U, S, V = np.linalg.svd(X, full_matrices=False)
+    S = np.diag(S)  # make S array into diagonal matrix
 
     lambda_ = (np.diag(S) ** 2) / window_size
 
@@ -149,12 +150,11 @@ def denoise_matrix(X):
     scaling = (n_vols - np.arange(0, min_mn)) / window_size
     scaling[scaling < 1] = 1
     while not p_test:
-        sigma2 = (lambda_[p + 1] - lambda_[min_mn]) / (4 * np.sqrt((n_vols - p) / window_size))
-        p_test = np.sum(lambda_[p + 1:min_mn]) / scaling[p + 1] >= (min_mn - p) * sigma2
+        sigma2 = (lambda_[p] - lambda_[min_mn - 1]) / (4 * np.sqrt((n_vols - p) / window_size))
+        p_test = np.sum(lambda_[p:min_mn-1]) / scaling[p] >= (min_mn - p - 1) * sigma2
         if not p_test:
             p += 1
 
-    sigma2 = np.sum(lambda_[p + 1:min_mn]) / (min_mn - p) / scaling[p + 1]
-
-    new_X = np.dot(np.dot(U[:, 1:p], S[1:p, 1:p]), V[:, 1:p].T) + X_m
+    sigma2 = np.sum(lambda_[p:min_mn-1]) / (min_mn - p - 1) / scaling[p]
+    new_X = np.dot(np.dot(U[:, :p], S[:p, :p]), V[:, :p].T) + X_m
     return new_X, sigma2, p
